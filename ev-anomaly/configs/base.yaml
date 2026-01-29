@@ -1,0 +1,82 @@
+project:
+  name: ev-anomaly
+  timezone: "Asia/Seoul"
+  seed: 42
+
+paths:
+  raw_csv: "data/raw/ElecCar_20240930.csv"
+  processed_dir: "data/processed"
+  results_dir: "results"
+
+data:
+  date_col: "일자"
+  mode_col: "충전방식"
+  hour_cols: ["00시","01시","02시","03시","04시","05시","06시","07시","08시","09시","10시","11시",
+             "12시","13시","14시","15시","16시","17시","18시","19시","20시","21시","22시","23시"]
+  mode_fast_values: ["급속"]
+  mode_slow_values: ["완속"]
+  freq: "H"
+
+features:
+  use_cols: ["fast", "slow", "total", "ratio_fast"]
+  add_calendar: true
+  rolling:
+    enable: true
+    windows_hours: [24, 168]
+
+split:
+  train_start: "2024-01-01"
+  train_end:   "2024-07-31"
+  val_start:   "2024-08-01"
+  val_end:     "2024-08-31"
+  test_start:  "2024-09-01"
+  test_end:    "2024-09-30"
+
+injection:
+  enabled: true
+  seed: 42
+  target: "test"   # train/val/test 중 어디에 주입할지
+  rate: 0.02
+  types:
+    point_spike:
+      prob: 0.45
+      strength: [1.5, 2.0, 3.0]
+    point_drop:
+      prob: 0.15
+      strength: [0.5, 0.3]
+    collective_shift:
+      prob: 0.30
+      duration_hours: [12, 24, 48]
+      base_add_ratio: [0.10, 0.20, 0.30]
+    peak_shift:
+      prob: 0.10
+      duration_hours: [24, 48]
+      shift_hours: [-3, -2, 2, 3]
+
+windows:
+  length: 168
+  stride: 1
+  label_mode: "any"   # window 내 anomaly가 하나라도 있으면 1
+
+tcn:
+  channels: [32, 32, 32]
+  kernel_size: 3
+  dropout: 0.1
+  lr: 0.001
+  epochs: 30
+  batch_size: 64
+
+threshold:
+  method: "quantile"
+  q: 0.995
+
+edge:
+  enabled: true
+  k: 10
+  radius_factor: 2.5
+  max_clusters: 256
+  min_clusters_for_scoring: 20
+  decay_older_than: 336          # 14 days * 24h
+  threshold_method: "quantile"
+  q: 0.995                       # 높일수록 Edge가 덜 잡음(=Fog로 더 많이 보냄)
+  k_std: 3.0                     # mean_std 방식일 때만 사용
