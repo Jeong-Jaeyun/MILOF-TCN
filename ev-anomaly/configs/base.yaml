@@ -52,6 +52,22 @@ injection:
       prob: 0.10
       duration_hours: [24, 48]
       shift_hours: [-3, -2, 2, 3]
+        drift_linear:
+      prob: 0.10
+      duration_hours: [72, 168]
+      end_ratio: [0.05, 0.10, 0.20]
+      direction: ["up"]
+    missing_blocks:
+      prob: 0.05
+      duration_hours: [6, 12, 24]
+      cols: ["total"]
+      impute: ["ffill", "interp"]
+    gaussian_noise:
+      prob: 0.05
+      duration_hours: [24, 72]
+      sigma_ratio: [0.05, 0.10, 0.20]
+      cols: ["total"]
+
 
 windows:
   length: 168

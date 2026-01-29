@@ -22,7 +22,6 @@ def _load_split(processed_dir: str, name: str) -> tuple[pd.DataFrame, pd.DataFra
 
 
 def _select_feature_cols(df: pd.DataFrame, feat_cfg: dict) -> list[str]:
-    # run_milof_tcn.py와 동일한 규칙 (가능한 한 일관성 유지)
     base = list(feat_cfg["use_cols"])
     cols = [c for c in base if c in df.columns]
 
@@ -70,18 +69,11 @@ def run_stats(cfg: dict, train_df, val_df, test_df, val_lab, test_lab) -> tuple[
     tva, val_scores = aggregate_point_scores_to_windows(val_df["ts"].to_numpy(), val_point, win_len, stride, agg="max")
     tte, test_scores = aggregate_point_scores_to_windows(test_df["ts"].to_numpy(), test_point, win_len, stride, agg="max")
 
-    # window labels은 run_milof_tcn과 동일 규칙(“any”)을 쓰는 게 맞다.
-    # 여기선 이미 inject_anomalies가 point label을 제공하므로, 윈도우 라벨을 다시 만든다.
-    def window_labels(lab_df: pd.DataFrame) -> np.ndarray:
-        y = lab_df["is_anomaly"].to_numpy(dtype=int)
-        ys = []
-        for start in range(0, len(y) - win_len + 1, stride):
-            end = start + win_len
-            ys.append(int(y[start:end].max() > 0))
-        return np.asarray(ys, dtype=int)
 
-    yva = window_labels(val_lab)
-    yte = window_labels(test_lab)
+    yva, keep_idx_va = window_labels_and_keepidx(val_lab, win_len, stride)
+    yte, keep_idx_te = window_labels_and_keepidx(test_lab, win_len, stride)
+    gte = window_group_id_from_keepidx(test_lab, keep_idx_te)
+
 
     thr = _pick_threshold(val_scores, cfg["threshold"])
 
@@ -90,11 +82,30 @@ def run_stats(cfg: dict, train_df, val_df, test_df, val_lab, test_lab) -> tuple[
         y_true=yte,
         scores=test_scores,
         threshold=thr,
-        group_id=None,  # baseline은 latency를 꼭 넣고 싶으면 keep_idx 기반으로 group_id 매핑을 추가하면 됨
+        group_id=gte,  
     )
     metrics["model"] = "stats_context_z"
     return metrics, curves
 
+def window_labels_and_keepidx(lab_df: pd.DataFrame, win_len: int, stride: int):
+    y = lab_df["is_anomaly"].to_numpy(dtype=int)
+
+
+    y_out, keep_idx = [], []
+    for start in range(0, len(y) - win_len + 1, stride):
+        end = start + win_len
+        y_out.append(int(y[start:end].max() > 0))
+        keep_idx.append((start, end - 1))
+    return np.asarray(y_out, dtype=int), keep_idx
+
+def window_group_id_from_keepidx(labels_df: pd.DataFrame, keep_idx):
+    gid_arr = labels_df["group_id"].to_numpy(dtype=int)
+    out = []
+    for (s, e) in keep_idx:
+        part = gid_arr[s:e+1]
+        part = part[part >= 0]
+        out.append(int(part[0]) if part.size else -1)
+    return np.asarray(out, dtype=int)
 
 def run_iforest(cfg: dict, train_df, val_df, test_df, val_lab, test_lab, feat_cols: list[str]) -> tuple[dict, pd.DataFrame]:
     model = IsolationForestBaseline(
@@ -121,8 +132,11 @@ def run_iforest(cfg: dict, train_df, val_df, test_df, val_lab, test_lab, feat_co
             ys.append(int(y[start:end].max() > 0))
         return np.asarray(ys, dtype=int)
 
-    yva = window_labels(val_lab)
-    yte = window_labels(test_lab)
+    yva, keep_idx_va = window_labels_and_keepidx(val_lab, win_len, stride)
+    yte, keep_idx_te = window_labels_and_keepidx(test_lab, win_len, stride)
+
+    gte = window_group_id_from_keepidx(test_lab, keep_idx_te)
+
 
     thr = _pick_threshold(val_scores, cfg["threshold"])
 
@@ -131,7 +145,7 @@ def run_iforest(cfg: dict, train_df, val_df, test_df, val_lab, test_lab, feat_co
         y_true=yte,
         scores=test_scores,
         threshold=thr,
-        group_id=None,
+        group_id=gte,
     )
     metrics["model"] = "iforest_point"
     return metrics, curves

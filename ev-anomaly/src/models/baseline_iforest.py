@@ -8,7 +8,7 @@ class IsolationForestBaseline:
     """
     Fit IsolationForest on point-wise features.
     Score per timestamp: higher means more anomalous.
-      score = -decision_function(x)
+    score = -decision_function(x)
     """
     def __init__(
         self,

@@ -70,7 +70,7 @@ class MiLOFEdgeDetector:
     def _prune(self) -> None:
         if not self.clusters:
             return
-        # remove very old clusters first (simple aging)
+        # remove very old clusters first
         now = self.t
         self.clusters = [c for c in self.clusters if (now - c.last_t) <= self.decay_older_than]
 

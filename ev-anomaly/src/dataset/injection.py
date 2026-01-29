@@ -5,6 +5,22 @@ import pandas as pd
 def _choice(rng, arr):
     return arr[rng.integers(0, len(arr))]
 
+def _apply_missing_block(out: pd.DataFrame, idx: list[int], cols: list[str], mode: str):
+    # mode: "ffill", "bfill", "zero", "interp"
+    for c in cols:
+        out.loc[idx, c] = np.nan
+    if mode == "zero":
+        out[cols] = out[cols].fillna(0.0)
+    elif mode == "ffill":
+        out[cols] = out[cols].ffill()
+    elif mode == "bfill":
+        out[cols] = out[cols].bfill()
+    elif mode == "interp":
+        out[cols] = out[cols].interpolate(limit_direction="both")
+    else:
+        raise ValueError(f"Unknown missing mode: {mode}")
+
+
 def inject_anomalies(df: pd.DataFrame, cfg: dict, target_col: str = "total") -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Returns:
@@ -90,6 +106,62 @@ def inject_anomalies(df: pd.DataFrame, cfg: dict, target_col: str = "total") -> 
             for i in idx: used.add(i)
             mark(idx, a_type, group_id)
             group_id += 1
+        
+        elif a_type == "drift_linear":
+            # linear upward/downward drift over duration
+            dur = int(_choice(rng, types[a_type]["duration_hours"]))
+            start = int(rng.integers(0, max(1, n - dur)))
+            idx = list(range(start, start + dur))
+            if any(i in used for i in idx):
+                continue
+            # ratio range e.g., [0.05, 0.2]
+            end_ratio = float(_choice(rng, types[a_type]["end_ratio"]))
+            direction = str(_choice(rng, types[a_type].get("direction", ["up"])))
+            sign = 1.0 if direction == "up" else -1.0
+
+            base = float(out[target_col].iloc[max(0, start-24):start].mean() if start > 0 else out[target_col].mean())
+            # add linearly increasing offset
+            for t, ii in enumerate(idx):
+                frac = (t + 1) / dur
+                out.loc[ii, target_col] = out.loc[ii, target_col] + sign * base * end_ratio * frac
+
+            for i in idx: used.add(i)
+            mark(idx, a_type, group_id); group_id += 1
+
+        elif a_type == "missing_blocks":
+            # missing block then imputation
+            dur = int(_choice(rng, types[a_type]["duration_hours"]))
+            start = int(rng.integers(0, max(1, n - dur)))
+            idx = list(range(start, start + dur))
+            if any(i in used for i in idx):
+                continue
+
+            cols = list(types[a_type].get("cols", [target_col]))
+            mode = str(_choice(rng, types[a_type].get("impute", ["ffill"])))
+            _apply_missing_block(out, idx, cols, mode)
+
+            for i in idx: used.add(i)
+            mark(idx, a_type, group_id); group_id += 1
+
+        elif a_type == "gaussian_noise":
+            # add observation noise to target_col (and optionally other cols)
+            dur = int(_choice(rng, types[a_type]["duration_hours"]))
+            start = int(rng.integers(0, max(1, n - dur)))
+            idx = list(range(start, start + dur))
+            if any(i in used for i in idx):
+                continue
+
+            sigma_ratio = float(_choice(rng, types[a_type]["sigma_ratio"]))
+            cols = list(types[a_type].get("cols", [target_col]))
+
+            for c in cols:
+                base = float(out[c].iloc[max(0, start-24):start].std(ddof=0) if start > 0 else out[c].std(ddof=0))
+                noise = rng.normal(loc=0.0, scale=max(1e-9, base * sigma_ratio), size=len(idx))
+                out.loc[idx, c] = out.loc[idx, c].to_numpy(dtype=float) + noise
+
+            for i in idx: used.add(i)
+            mark(idx, a_type, group_id); group_id += 1
+
 
         else:
             # 확장 대비
@@ -98,7 +170,7 @@ def inject_anomalies(df: pd.DataFrame, cfg: dict, target_col: str = "total") -> 
         if len(used) >= budget:
             break
 
-    # fast/slow 일관성 유지: total만 바꾸면 ratio가 깨질 수 있으니, 단순 비례로 분해
+    # fast/slow 일관성 유지
     if "fast" in out.columns and "slow" in out.columns and "ratio_fast" in out.columns:
         r = out["ratio_fast"].clip(0, 1)
         out["fast"] = out[target_col] * r
