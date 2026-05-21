@@ -13,4 +13,4 @@ python scripts/run_milof_tcn.py --config configs/base.yaml
 python scripts/run_sweep.py --config configs/base.yaml
 
 CopyRight by
--Jeong Jaeyun-
+-HwaYoung Jeong-
